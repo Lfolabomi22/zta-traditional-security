@@ -1,0 +1,385 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Cordon — Zero Trust Console</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  :root {
+    --bg: #0b0e14; --panel: #12161f; --panel2: #171c28; --border: #232a3a;
+    --text: #e6e9f0; --muted: #8a92a6; --accent: #5b8cff;
+    --ok: #34d399; --warn: #fbbf24; --bad: #f87171;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg); color: var(--text); font-size: 14px;
+  }
+  header {
+    padding: 16px 24px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; letter-spacing: .3px; }
+  header h1 span { color: var(--accent); }
+  header .sub { color: var(--muted); font-size: 12px; }
+  .layout {
+    display: grid; grid-template-columns: 300px 1fr 340px; gap: 16px;
+    padding: 16px; height: calc(100vh - 57px);
+  }
+  .panel {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+    padding: 14px; overflow-y: auto;
+  }
+  .panel h2 {
+    font-size: 12px; text-transform: uppercase; letter-spacing: .6px;
+    color: var(--muted); margin: 0 0 10px;
+  }
+  label { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 4px; }
+  select, input, button {
+    width: 100%; background: var(--panel2); border: 1px solid var(--border);
+    color: var(--text); padding: 7px 9px; border-radius: 6px; font-size: 13px;
+  }
+  button {
+    cursor: pointer; margin-top: 10px; font-weight: 600; transition: .15s;
+  }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: white; }
+  button.danger { background: #3a1414; border-color: var(--bad); color: var(--bad); }
+  .row { display: flex; gap: 8px; }
+  .row > * { flex: 1; }
+  .chip {
+    display: inline-block; padding: 2px 8px; border-radius: 20px; font-size: 11px;
+    font-weight: 600; margin-right: 4px;
+  }
+  .chip.ok { background: #0f2e22; color: var(--ok); }
+  .chip.warn { background: #3a2c0a; color: var(--warn); }
+  .chip.bad { background: #3a1414; color: var(--bad); }
+  .action-btn {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 10px; margin-bottom: 8px; border: 1px solid var(--border);
+    border-radius: 8px; background: var(--panel2); cursor: pointer;
+  }
+  .action-btn:hover { border-color: var(--accent); }
+  .action-btn .meta { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .gauge-wrap { text-align: center; margin: 6px 0 16px; }
+  svg#gauge { width: 100%; max-width: 220px; }
+  #gaugeValue { font-size: 30px; font-weight: 700; }
+  #gaugeLabel { font-size: 11px; color: var(--muted); }
+  .bars div { margin-bottom: 10px; }
+  .bar-label { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); margin-bottom: 3px; }
+  .bar-track { height: 6px; background: var(--panel2); border-radius: 4px; overflow: hidden; }
+  .bar-fill { height: 100%; background: var(--accent); border-radius: 4px; transition: width .3s; }
+  .decision-box {
+    border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin-top: 10px;
+  }
+  .decision-box .verdict { font-size: 20px; font-weight: 800; }
+  .reason { font-size: 12px; color: var(--muted); padding: 3px 0; border-bottom: 1px dashed var(--border); }
+  .audit-item { font-size: 11px; border-bottom: 1px solid var(--border); padding: 8px 0; }
+  .audit-item .top { display: flex; justify-content: space-between; font-weight: 600; }
+  .audit-item .rule { color: var(--muted); }
+  .empty { color: var(--muted); font-size: 12px; text-align: center; padding: 20px 0; }
+  .badge-verdict { padding: 2px 10px; border-radius: 6px; font-size: 11px; font-weight: 700; }
+  .v-ALLOW { background: #0f2e22; color: var(--ok); }
+  .v-STEP_UP { background: #3a2c0a; color: var(--warn); }
+  .v-DENY { background: #3a1414; color: var(--bad); }
+  code { color: var(--accent); }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>Cordon <span>· Zero Trust Console</span></h1>
+    <div class="sub">NIST SP 800-207 control plane — live PDP/PEP demonstration</div>
+  </div>
+  <div class="sub" id="whoami">not authenticated</div>
+</header>
+
+<div class="layout">
+
+  <!-- LEFT: identity & context controls -->
+  <div class="panel">
+    <h2>Persona</h2>
+    <label>Preset</label>
+    <select id="preset"></select>
+
+    <label>Subject</label>
+    <input id="subject" value="alice" />
+
+    <label>Roles (comma-separated)</label>
+    <input id="roles" value="user" />
+
+    <label>Auth methods presented</label>
+    <select id="amr" multiple size="4"></select>
+
+    <div class="row">
+      <div><label>MFA satisfied</label><select id="mfa"><option value="true">yes</option><option value="false">no</option></select></div>
+      <div><label>Device</label><select id="device"></select></div>
+    </div>
+
+    <button class="primary" id="loginBtn">Sign in</button>
+    <button id="revokeBtn">Kill current session</button>
+
+    <h2 style="margin-top:22px">Request context</h2>
+    <div class="row">
+      <div><label>Source zone</label>
+        <select id="zone"><option value="public">public</option><option value="app" selected>app</option><option value="data">data</option></select>
+      </div>
+      <div><label>IP reputation (0–1)</label><input id="ipRep" value="0.95" /></div>
+    </div>
+    <div class="row">
+      <div><label>Off hours</label><select id="offHours"><option value="0">no</option><option value="1">yes</option></select></div>
+      <div><label>Impossible travel</label><select id="travel"><option value="0">no</option><option value="1">yes</option></select></div>
+    </div>
+    <div class="row">
+      <div><label>Behavioural anomaly (0–1)</label><input id="anomaly" value="0.05" /></div>
+      <div><label>Failed attempts (1h)</label><input id="failed" value="0" /></div>
+    </div>
+    <label>Request rate (1m)</label>
+    <input id="rate" value="5" />
+
+    <h2 style="margin-top:22px">Attack simulator</h2>
+    <button data-atk="stolen">Stolen credential, attacker device</button>
+    <button data-atk="hijack">Impossible-travel hijack</button>
+    <button data-atk="brute">Credential-stuffing burst</button>
+    <button data-atk="reset">Reset to clean baseline</button>
+  </div>
+
+  <!-- CENTER: resources + decision -->
+  <div class="panel">
+    <h2>Protected resources</h2>
+    <div id="actions"></div>
+
+    <h2 style="margin-top:18px">Last decision</h2>
+    <div id="decisionArea" class="empty">Sign in, then choose a resource to see the PDP verdict.</div>
+  </div>
+
+  <!-- RIGHT: trust gauge + audit stream -->
+  <div class="panel">
+    <h2>Composite trust</h2>
+    <div class="gauge-wrap">
+      <svg id="gauge" viewBox="0 0 200 120">
+        <path d="M20,110 A80,80 0 0,1 180,110" fill="none" stroke="#232a3a" stroke-width="14"/>
+        <path id="gaugeArc" d="M20,110 A80,80 0 0,1 180,110" fill="none" stroke="#5b8cff" stroke-width="14" stroke-dasharray="0 251" stroke-linecap="round"/>
+      </svg>
+      <div id="gaugeValue">–</div>
+      <div id="gaugeLabel">no request evaluated yet</div>
+    </div>
+    <div class="bars" id="subscores"></div>
+
+    <h2 style="margin-top:18px">Audit stream</h2>
+    <div id="audit"><div class="empty">No decisions yet</div></div>
+  </div>
+
+</div>
+
+<script>
+const API = "";
+let token = null;
+let currentDecision = null;
+
+const AMR_OPTIONS = ["password","otp","fingerprint","palm","iris","passkey"];
+const amrSelect = document.getElementById("amr");
+AMR_OPTIONS.forEach(m => {
+  const o = document.createElement("option"); o.value = m; o.textContent = m;
+  amrSelect.appendChild(o);
+});
+amrSelect.querySelector('[value="passkey"]').selected = true;
+
+const PRESETS = {
+  "alice — everyday user, healthy device": { subject: "alice", roles: "user", amr: ["passkey"], mfa: "true", device: "dev-001" },
+  "bola — analyst, compliant device": { subject: "bola", roles: "analyst", amr: ["passkey","fingerprint"], mfa: "true", device: "dev-001" },
+  "carl — admin, needs iris for export": { subject: "carl", roles: "admin", amr: ["passkey","fingerprint"], mfa: "true", device: "dev-001" },
+  "mallory — attacker, weak device": { subject: "mallory", roles: "user", amr: ["password"], mfa: "false", device: "dev-weak" },
+};
+const presetSel = document.getElementById("preset");
+Object.keys(PRESETS).forEach(k => {
+  const o = document.createElement("option"); o.value = k; o.textContent = k;
+  presetSel.appendChild(o);
+});
+presetSel.onchange = () => applyPreset(PRESETS[presetSel.value]);
+
+function applyPreset(p) {
+  document.getElementById("subject").value = p.subject;
+  document.getElementById("roles").value = p.roles;
+  document.getElementById("mfa").value = p.mfa;
+  [...amrSelect.options].forEach(o => o.selected = p.amr.includes(o.value));
+  loadDevices().then(() => { document.getElementById("device").value = p.device; });
+}
+
+async function loadDevices() {
+  const r = await fetch(`${API}/api/catalogue`);
+  const data = await r.json();
+  const sel = document.getElementById("device");
+  sel.innerHTML = "";
+  data.devices.forEach(d => {
+    const o = document.createElement("option"); o.value = d; o.textContent = d;
+    sel.appendChild(o);
+  });
+  renderActions(data.resources);
+}
+
+function renderActions(resources) {
+  const map = {
+    "public.health": { label: "Health check", method: "GET", path: "/health" },
+    "app.dashboard": { label: "View dashboard", method: "GET", path: "/api/dashboard" },
+    "app.profile.write": { label: "Update profile", method: "POST", path: "/api/profile" },
+    "data.records.read": { label: "Read records", method: "GET", path: "/api/records" },
+    "data.records.export": { label: "Export records", method: "GET", path: "/api/records/export" },
+  };
+  const box = document.getElementById("actions");
+  box.innerHTML = "";
+  Object.entries(map).forEach(([rid, m]) => {
+    const policy = resources[rid];
+    const div = document.createElement("div");
+    div.className = "action-btn";
+    div.innerHTML = `<div>
+        <div>${m.label}</div>
+        <div class="meta">${m.method} ${m.path} · min trust ${policy.min_trust}${policy.require_mfa ? " · MFA required" : ""}</div>
+      </div>
+      <div class="chip ${policy.zone === 'data' ? 'bad' : policy.zone === 'app' ? 'warn' : 'ok'}">${policy.zone}</div>`;
+    div.onclick = () => callResource(m.method, m.path);
+    box.appendChild(div);
+  });
+}
+
+function contextHeaders() {
+  return {
+    "x-zta-source-zone": document.getElementById("zone").value,
+    "x-zta-ip-reputation": document.getElementById("ipRep").value,
+    "x-zta-off-hours": document.getElementById("offHours").value,
+    "x-zta-impossible-travel": document.getElementById("travel").value,
+    "x-zta-anomaly": document.getElementById("anomaly").value,
+    "x-zta-failed-attempts": document.getElementById("failed").value,
+    "x-zta-rate": document.getElementById("rate").value,
+  };
+}
+
+document.getElementById("loginBtn").onclick = async () => {
+  const amr = [...amrSelect.selectedOptions].map(o => o.value);
+  const body = {
+    subject: document.getElementById("subject").value,
+    roles: document.getElementById("roles").value.split(",").map(s => s.trim()).filter(Boolean),
+    amr, mfa: document.getElementById("mfa").value === "true",
+    device_id: document.getElementById("device").value,
+  };
+  const r = await fetch(`${API}/login`, { method: "POST", headers: {"content-type":"application/json"}, body: JSON.stringify(body) });
+  const data = await r.json();
+  token = data.access_token;
+  document.getElementById("whoami").textContent = `${body.subject} · ${body.roles.join(",")} · token issued`;
+};
+
+document.getElementById("revokeBtn").onclick = async () => {
+  if (!token) return;
+  await fetch(`${API}/revoke`, { method: "POST", headers: {"content-type":"application/json"}, body: JSON.stringify({ token }) });
+  document.getElementById("whoami").textContent += " · REVOKED";
+};
+
+async function callResource(method, path) {
+  if (!token) { alert("Sign in first."); return; }
+  const r = await fetch(`${API}${path}`, { method, headers: { authorization: `Bearer ${token}`, ...contextHeaders() } });
+  const body = await r.json().catch(() => ({}));
+  renderDecision(r, body);
+  refreshAudit();
+}
+
+function renderDecision(response, body) {
+  const trust = parseFloat(response.headers.get("x-zta-trust") || (body.trust ?? "0"));
+  const verdict = response.headers.get("x-zta-decision") ||
+    (response.status === 401 ? "STEP_UP" : response.status === 403 ? "DENY" : "ALLOW");
+
+  updateGauge(trust, verdict);
+
+  const area = document.getElementById("decisionArea");
+  const reasons = body.reasons || [];
+  area.className = "";
+  area.innerHTML = `
+    <div class="decision-box">
+      <span class="badge-verdict v-${verdict}">${verdict}</span>
+      <span style="color:var(--muted); font-size:12px; margin-left:8px;">rule ${body.rule || "PR-00"} · request ${body.request_id || response.headers.get("x-zta-request-id") || "–"}</span>
+      <div style="margin-top:10px;">
+        ${reasons.map(r => `<div class="reason">${r}</div>`).join("") || '<div class="reason">Trust met threshold; access granted.</div>'}
+      </div>
+      ${body.challenge ? `<div style="margin-top:8px;font-size:12px;color:var(--warn)">Step-up challenge: ${body.challenge.join(", ")}</div>` : ""}
+    </div>`;
+}
+
+function updateGauge(trust, verdict) {
+  const pct = Math.max(0, Math.min(100, trust)) / 100;
+  const circumference = 251;
+  document.getElementById("gaugeArc").setAttribute("stroke-dasharray", `${pct*circumference} ${circumference}`);
+  const color = verdict === "ALLOW" ? "#34d399" : verdict === "STEP_UP" ? "#fbbf24" : "#f87171";
+  document.getElementById("gaugeArc").setAttribute("stroke", color);
+  document.getElementById("gaugeValue").textContent = trust.toFixed(1);
+  document.getElementById("gaugeValue").style.color = color;
+  document.getElementById("gaugeLabel").textContent = verdict;
+}
+
+async function refreshAudit() {
+  const r = await fetch(`${API}/api/audit-log?limit=15`);
+  const events = await r.json();
+  const box = document.getElementById("audit");
+  if (!events.length) { box.innerHTML = '<div class="empty">No decisions yet</div>'; return; }
+  box.innerHTML = events.map(e => `
+    <div class="audit-item">
+      <div class="top">
+        <span class="badge-verdict v-${e.decision}">${e.decision}</span>
+        <span>${e.trust_composite}</span>
+      </div>
+      <div class="rule">${e.subject} → ${e.resource} · ${e.rule}</div>
+    </div>`).join("");
+
+  const last = events[0];
+  const subs = document.getElementById("subscores");
+  const rows = [["Identity", last.trust_identity], ["Device", last.trust_device], ["Context", last.trust_context]];
+  subs.innerHTML = rows.map(([label, val]) => `
+    <div>
+      <div class="bar-label"><span>${label}</span><span>${val}</span></div>
+      <div class="bar-track"><div class="bar-fill" style="width:${val}%"></div></div>
+    </div>`).join("");
+}
+
+// ---- attack simulator presets ----
+document.querySelectorAll("[data-atk]").forEach(btn => {
+  btn.onclick = () => {
+    const atk = btn.dataset.atk;
+    if (atk === "reset") {
+      document.getElementById("zone").value = "app";
+      document.getElementById("ipRep").value = "0.95";
+      document.getElementById("offHours").value = "0";
+      document.getElementById("travel").value = "0";
+      document.getElementById("anomaly").value = "0.05";
+      document.getElementById("failed").value = "0";
+      document.getElementById("rate").value = "5";
+      return;
+    }
+    if (atk === "stolen") {
+      applyPreset({ subject: "alice", roles: "user", amr: ["password"], mfa: "false", device: "dev-weak" });
+      document.getElementById("zone").value = "public";
+      document.getElementById("ipRep").value = "0.4";
+      document.getElementById("offHours").value = "1";
+      document.getElementById("anomaly").value = "0.8";
+      document.getElementById("failed").value = "3";
+    }
+    if (atk === "hijack") {
+      applyPreset(PRESETS["alice — everyday user, healthy device"]);
+      document.getElementById("travel").value = "1";
+    }
+    if (atk === "brute") {
+      applyPreset({ subject: "mallory", roles: "user", amr: ["password"], mfa: "false", device: "dev-weak" });
+      document.getElementById("zone").value = "public";
+      document.getElementById("rate").value = "300";
+      document.getElementById("ipRep").value = "0.2";
+      document.getElementById("anomaly").value = "0.95";
+      document.getElementById("failed").value = "14";
+    }
+  };
+});
+
+loadDevices();
+applyPreset(PRESETS["alice — everyday user, healthy device"]);
+refreshAudit();
+setInterval(refreshAudit, 4000);
+</script>
+</body>
+</html>

@@ -1,0 +1,155 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Cordon ZTA demo — EC2 instance running the FastAPI app behind a Zero Trust
+  PDP/PEP, with an IAM role scoped for CloudWatch Logs shipping and SSM access
+  (no long-lived SSH keys required if you use Session Manager instead).
+
+Parameters:
+  KeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Existing EC2 key pair for SSH access (skip if using SSM only)
+  SSHLocation:
+    Type: String
+    Default: 0.0.0.0/0
+    Description: CIDR allowed to SSH in — restrict this to your own IP, e.g. 203.0.113.4/32
+  InstanceType:
+    Type: String
+    Default: t3.micro
+    AllowedValues: [t3.micro, t3.small, t3.medium]
+  AppPort:
+    Type: Number
+    Default: 8000
+  LatestAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/canonical/ubuntu/server/22.04/stable/current/amd64/hvm/ebs-gp2/ami-id
+
+Resources:
+
+  CordonRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: CordonEC2Role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ec2.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: CordonLogsWrite
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - logs:DescribeLogStreams
+                Resource: "arn:aws:logs:*:*:log-group:/cordon/*"
+
+  CordonInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [!Ref CordonRole]
+
+  CordonSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Cordon demo — SSH from operator IP, app port from anywhere
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref SSHLocation
+        - IpProtocol: tcp
+          FromPort: !Ref AppPort
+          ToPort: !Ref AppPort
+          CidrIp: 0.0.0.0/0
+
+  CordonInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: !Ref InstanceType
+      ImageId: !Ref LatestAmiId
+      KeyName: !Ref KeyName
+      IamInstanceProfile: !Ref CordonInstanceProfile
+      SecurityGroups: [!Ref CordonSecurityGroup]
+      Tags:
+        - { Key: Name, Value: cordon-zta-demo }
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -e
+          apt-get update -y
+          apt-get install -y python3-pip unzip
+
+          # CloudWatch agent
+          curl -s https://s3.amazonaws.com/amazoncloudwatch-agent/ubuntu/amd64/latest/amazon-cloudwatch-agent.deb -o /tmp/cwagent.deb
+          dpkg -i -E /tmp/cwagent.deb || apt-get install -f -y
+
+          mkdir -p /home/ubuntu/zta_app /var/log/cordon
+          chown ubuntu:ubuntu /var/log/cordon
+
+          # App code is pushed post-launch via scp/deploy.sh — this just
+          # prepares the host so the service can start the moment it lands.
+          cat > /etc/systemd/system/cordon.service << 'EOF'
+          [Unit]
+          Description=Cordon ZTA demo
+          After=network.target
+
+          [Service]
+          User=ubuntu
+          WorkingDirectory=/home/ubuntu/zta_app
+          ExecStart=/usr/local/bin/uvicorn zta_pep:app --host 0.0.0.0 --port ${AppPort}
+          Restart=always
+          StandardOutput=append:/var/log/cordon/audit.log
+          StandardError=append:/var/log/cordon/error.log
+
+          [Install]
+          WantedBy=multi-user.target
+          EOF
+
+          cat > /opt/aws/amazon-cloudwatch-agent/etc/config.json << 'EOF'
+          {
+            "logs": {
+              "logs_collected": {
+                "files": {
+                  "collect_list": [
+                    {
+                      "file_path": "/var/log/cordon/audit.log",
+                      "log_group_name": "/cordon/pdp-decisions",
+                      "log_stream_name": "{instance_id}",
+                      "timestamp_format": "%Y-%m-%d %H:%M:%S"
+                    },
+                    {
+                      "file_path": "/var/log/cordon/error.log",
+                      "log_group_name": "/cordon/errors",
+                      "log_stream_name": "{instance_id}"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+          EOF
+
+          /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
+            -a fetch-config -m ec2 -s -c file:/opt/aws/amazon-cloudwatch-agent/etc/config.json
+
+          systemctl daemon-reload
+          systemctl enable cordon.service
+          # not started yet — no app code present until deploy.sh runs
+
+Outputs:
+  InstanceId:
+    Value: !Ref CordonInstance
+  PublicIp:
+    Value: !GetAtt CordonInstance.PublicIp
+  ConsoleURL:
+    Value: !Sub "http://${CordonInstance.PublicIp}:${AppPort}/console/"
+  SSHCommand:
+    Value: !Sub "ssh -i <your-key>.pem ubuntu@${CordonInstance.PublicIp}"
